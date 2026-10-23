@@ -39,9 +39,8 @@ def configure_math(
 ) -> str:
     math_fmt = new_math.cpp_enum_value
     return (
-        f"_configure_alu_formats_<{dest_acc}>(\n"
-        f"    {math_fmt}, {math_fmt},\n"
-        f"    _is_src_fmt_int32_dest_compatible_({math_fmt}) && {dest_acc}, DataFormat::Invalid\n"
+        f"_configure_alu_cfg_<AluCfgType::DEFAULT, {dest_acc}>(\n"
+        f"    {math_fmt}, {math_fmt}\n"
         f");\n"
     )
 

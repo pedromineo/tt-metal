@@ -68,7 +68,7 @@ inline void _reduce_row_transpose_alu_cfg_exit_()
  */
 inline void _reduce_row_transpose_fpu_()
 {
-    _configure_mov_ops_explicit_alu_data_format_state_<true>(DataFormat::Int32, DataFormat::Int32);
+    _configure_alu_cfg_<AluCfgType::MOV_OPS_EXPLICIT_FORMAT, true>(DataFormat::Int32, DataFormat::Int32);
     _reduce_row_transpose_alu_cfg_enter_();
 
     // MATH drains the preceding math instructions so their source-bank release has landed before
@@ -103,7 +103,7 @@ inline void _reduce_row_transpose_fpu_()
     }
 
     _reduce_row_transpose_alu_cfg_exit_();
-    _configure_default_alu_data_format_state_<true /* EN_32BIT_DEST */>(DataFormat::Int8, DataFormat::Int8);
+    _configure_alu_cfg_<AluCfgType::DEFAULT, true /* EN_32BIT_DEST */>(DataFormat::Int8, DataFormat::Int8);
 }
 
 /**
