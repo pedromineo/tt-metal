@@ -85,6 +85,16 @@ Override locations with `QWEN_TTSIM_DIR`, `QWEN_CRAQ_SIM`, `QWEN_EMU_DIR`.
 
 A hang shows up as the pytest timeout. The script prints the last lines of `progress.log`; the watcher log has per-core waypoints (default/deep profiles). On simulators `TT_METAL_OPERATION_TIMEOUT_SECONDS` is ignored (`tt_metal/llrt/llrt.cpp`, `wait_until_cores_done`). For a hard-to-localize hang, temporarily patch it locally to honor that variable when set; do not commit that change.
 
+## Graph-capture op tests (`qwen3_vl_ops`)
+
+`models/experimental/ops/quasar/tests/qwen3_vl_ops/` (on main) replays every distinct call of a WH N150 demo capture: demo sizes, bfp8/bfp4 dtypes and WH program/shard configs, so some cases do not fit Quasar as captured. On craq-sim we run it with `TTNN_GRAPH_OPS_BF8_AS_BF16=1` (block-float cases run as bf16), one pytest invocation per case (a craq-sim abort or hang loses only that case), and `test_add.py` / `test_multiply.py` a second time through `ttnn.experimental.quasar.add` / `.multiply` (the base ops are not ported to Quasar; that is expected, not a finding).
+
+| Date | Target | Cases | Pass | Skip (captured config too large for the device) | Fail | Timeout | Wall time |
+|---|---|---|---|---|---|---|---|
+| 2026-10-26 | craq-sim 8x4 (.so md5 74c8eb33), branch on main fb6d34ceaed | 134 (+12 experimental add/mul) | 94 (+10) | 23 (+2): 8x5 L1 shard grids, 12-bank DRAM sharding | 16 | 1 | 1 h 45 min (95 min in tests; 12-50 s per case) |
+
+The 16 failures: base add (7) and multiply (3), all passing through the experimental ops; `linear` with a captured 8x8 matmul grid (2); `plus_one` int32 and uint32 (2, Q22); `scatter` (1, Q1); `layer_norm` `[2752, 4096]` at PCC 0.998996 against 0.999 (1). The timeout is prefill SDPA `[16, 12288, 64]` (more than 20 min on craq-sim; the `[32, 4096, 128]` case passes in 13 min). Per-case results and times: `generated/qwen3_vl_ops_sweep_1026/summary.md` and `results.tsv` on the run host.
+
 ## Droppable commits carried on the branch
 
 Kernel fixes not yet in main, each a separate `[droppable]` commit (details in the plan and QUASAR_GAPS.md):
@@ -97,7 +107,7 @@ Kernel fixes not yet in main, each a separate `[droppable]` commit (details in t
 
 ## Baselines and run times
 
-Wall time is the first-to-last-op span from `progress.log` (setup and weight loading add a few minutes). Tiny size, 2 vision / 2 text layers, 1 decode step, unless noted.
+Wall time is the first-to-last-op span from `progress.log` (setup and weight loading add a few minutes). The repro suite (`tests/e2e/repros`, as run by the checks) takes about 12 min on craq-sim 2x1. Tiny size, 2 vision / 2 text layers, 1 decode step, unless noted.
 
 | Target | Grid | Verdict | Wall time | Date | Run folder (`generated/qwen3_vl_quasar/...`) |
 |---|---|---|---|---|---|
