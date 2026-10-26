@@ -85,18 +85,31 @@ Override locations with `QWEN_TTSIM_DIR`, `QWEN_CRAQ_SIM`, `QWEN_EMU_DIR`.
 
 A hang shows up as the pytest timeout. The script prints the last lines of `progress.log`; the watcher log has per-core waypoints (default/deep profiles). On simulators `TT_METAL_OPERATION_TIMEOUT_SECONDS` is ignored (`tt_metal/llrt/llrt.cpp`, `wait_until_cores_done`). For a hard-to-localize hang, temporarily patch it locally to honor that variable when set; do not commit that change.
 
-## Cherry-picks applied
+## Droppable commits carried on the branch
 
-| PR | Commits | Why | Drop when |
-|---|---|---|---|
-| [#59510](https://github.com/tenstorrent/tt-metal/issues/59510) (not a PR yet) | `[droppable] WH exp: SFPNOP after SFPMAD ...` | WH approx exp returns zeros with `TT_METAL_DISABLE_SFPLOADMACRO=1` (SDPA outputs zeros on WH silicon) | the upstream fix lands |
+Kernel fixes not yet in main, each a separate `[droppable]` commit (details in the plan and QUASAR_GAPS.md):
 
-## Baselines
+| Commit | Why | Drop when |
+|---|---|---|
+| `[droppable] tensor_layout: skip the duplicate from_shard_spec call ...` | left over from the #57753 PR head; not in main | it is no longer needed by the e2e |
+| `[droppable] slice (Quasar): write back and drop the reader's scratchpad cache lines ...` | Q17: stale DM-cache lines from the slice reader corrupt a later decode rms_norm | a general fix lands (no PR yet) |
+| `[droppable] revert #57646 (DFB drain in the DataflowBuffer destructor) ...` | Q18: with the destructor drain, `paged_update_cache` and the sharded rms_norm still hang on craq-sim | those kernels are fixed (#60027) |
+| `[droppable] layernorm (Quasar): keep the reduce scaler DataflowBuffer at kernel scope ...` | Q18: layer_norm hangs under the drain (draft [#62427](https://github.com/tenstorrent/tt-metal/pull/62427)) | #62427 lands |
 
-| Target | Grid | Size | V/T/K | Verdict | Wall time | Run folder |
-|---|---|---|---|---|---|---|
-| ttsim WH | 8x8 | tiny | 2/2/1 | PASS (all stages >= 0.9993) | 10 min | `generated/qwen3_vl_quasar/wh_bh_wh_native_quasar/20261006T154929Z` |
-| ttsim WH | 2x1 | tiny | 2/2/1 | PASS (all stages >= 0.9985) | 10 min | `generated/qwen3_vl_quasar/wh_bh_wh_2x3_quasar/20261006T153843Z` |
-| WH N150 silicon | 8x9 | tiny | 2/2/1 | PASS (all stages >= 0.9993), with the #59510 fix commit | — | aus-wh-08 `wh_bh_hw_native_quasar/20261006T182734Z` |
+## Baselines and run times
 
-Blackhole (ttsim and hardware) is not part of the baseline.
+Wall time is the first-to-last-op span from `progress.log` (setup and weight loading add a few minutes). Tiny size, 2 vision / 2 text layers, 1 decode step, unless noted.
+
+| Target | Grid | Verdict | Wall time | Date | Run folder (`generated/qwen3_vl_quasar/...`) |
+|---|---|---|---|---|---|
+| craq-sim (a928410c / staged .so md5 74c8eb33) | 2x1 | PASS (prefill logits 0.99727, decode0 0.99918) | 41 min | 2026-10-22 | `craq_2x3/20261022T134319Z` |
+| craq-sim (same) | 8x4 | PASS (prefill 0.99710, decode0 0.99915) | 14 min | 2026-10-22 | `craq_8x4/20261022T142425Z` |
+| craq-sim, without `quasar_rms_norm_bf16_dest` | 2x1 / 8x4 | PASS (prefill 0.99685 / 0.99687) | 42 min / 15 min | 2026-10-21 | `craq_2x3/20261021T170032Z`, `craq_8x4/20261021T175443Z` |
+| craq-sim (older build) | 2x1 / 8x4 | PASS | 36 min / 12 min | 2026-10-16 | `craq_2x3/20261016T165030Z`, `craq_8x4/20261016T183306Z` |
+| craq-sim (older build, 695 device ops) | 2x1 | PASS | 8 min | 2026-10-08 | `craq_2x3/20261008T161235Z` |
+| emu-quasar-2x3 | 2x1 | FAIL: DRAM wraps at 64 MiB per channel (S7), logits NaN | 165 min (2 h 47 min wall) | 2026-10-08 | `emu_2x3/20261008T212107Z` |
+| emu-quasar-2x3, vision only, V=1 | 2x1 | FAIL (S7) | 13-43 min | 2026-10-09 | `emu_2x3/20261009T0*` |
+| ttsim WH | 2x1 / 8x8 / 8x4 | PASS | 10 / 9 / 10 min | 2026-10-16 | `wh_bh_wh_2x3_quasar/20261016T180210Z`, `wh_bh_wh_native_quasar/20261016T18*` |
+| WH N150 silicon | 8x9 | PASS (all stages >= 0.9993), with the #59510 fix | — | 2026-10-06 | aus-wh-08 `wh_bh_hw_native_quasar/20261006T182734Z` |
+
+The 2026-10-08 craq-sim run logged 695 device ops against 1212 from 2026-10-16 on (more of the model runs on device now), so its 8 min is not comparable with today's 41 min. Blackhole (ttsim and hardware) is not part of the baseline.
