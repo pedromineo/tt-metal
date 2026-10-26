@@ -122,7 +122,9 @@ class PlannedNode:
             operand = operands.get(slot)
             if operand is not None:
                 capacity, label = operand.tile_count, f"operand '{operand.name}'"
-            elif slot in DEST_SLOTS and self.role != "unpack":
+            elif slot in DEST_SLOTS and (
+                self.role != "unpack" or self.node.unpack_to_dest.value
+            ):
                 capacity, label = dest_capacity, "(Dst)"
             else:
                 continue

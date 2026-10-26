@@ -5,7 +5,9 @@
 from typing import TYPE_CHECKING
 
 from fuser.fpu_node import FpuNode
+from helpers.chip_architecture import ChipArchitecture
 from helpers.format_config import DataFormat
+from helpers.llk_params import DestSync
 
 if TYPE_CHECKING:
     from fuser.fuser_config import GlobalConfig
@@ -49,20 +51,6 @@ def configure_unpack(
     return ""
 
 
-def _upk_to_dest_sem_init(config: "GlobalConfig", operation: "L1Operation") -> str:
-    from fuser.fpu_node import FpuNode
-    from fuser.quasar.unpacker.unpack_a import _uses_upk_to_dest_semaphores
-
-    if not _uses_upk_to_dest_semaphores(config):
-        return ""
-    if not any(
-        isinstance(node, FpuNode) and node.unpack_to_dest.value
-        for node in operation.math_nodes
-    ):
-        return ""
-    return "_llk_sync_init_(semaphore::UNPACK_MATH, 1, 0);\n"
-
-
 def dvalid_init(config: "GlobalConfig" = None, operation: "L1Operation" = None) -> str:
     from helpers.llk_params import PerfRunType
 
@@ -70,7 +58,7 @@ def dvalid_init(config: "GlobalConfig" = None, operation: "L1Operation" = None) 
         if config.perf_run_type in (None, PerfRunType.L1_TO_L1):
             return "set_up_dest_dvalid_per_thread<dest_dvalid_client::UNPACK>({dest_dvalid_client::FPU, dest_dvalid_client::PACK});\n"
         return "set_up_zero_dest_dvalid_handshake_for_unpack();\n"
-    return _upk_to_dest_sem_init(config, operation)
+    return ""
 
 
 def sync_with_packer(config: "GlobalConfig", operation: "L1Operation") -> str:
@@ -80,3 +68,85 @@ def sync_with_packer(config: "GlobalConfig", operation: "L1Operation") -> str:
             "_llk_sync_get_<>(semaphore::PACK_UNPACK);\n"
         )
     return ""
+
+
+def configure_unpack_to_dest_sync(
+    config: "GlobalConfig", pipeline: list["L1Operation"]
+) -> None:
+    config.quasar_unpack_to_dest = (
+        config.architecture == ChipArchitecture.QUASAR
+        and any(
+            isinstance(node, FpuNode) and node.unpack_to_dest.value
+            for operation in pipeline
+            for node in operation.math_nodes
+        )
+    )
+    if not config.quasar_unpack_to_dest:
+        return
+    if config.quasar_use_dvalid:
+        raise ValueError("Quasar unpack_to_dest requires quasar_use_dvalid: false")
+    if len({operation.dest_sync for operation in pipeline}) != 1:
+        raise ValueError(
+            "Quasar unpack_to_dest requires a consistent dest_sync across the pipeline"
+        )
+    for stage, operation in enumerate(pipeline, start=1):
+        _validate_unpack_to_dest_schedule(operation, stage)
+
+
+def _validate_unpack_to_dest_schedule(operation: "L1Operation", stage: int) -> None:
+    math_started = False
+    for index, node in enumerate(operation.math_nodes, start=1):
+        if not isinstance(node, FpuNode) or node.unpacker is None:
+            math_started = True
+            continue
+        location = f"Operation {stage}, math node {index}"
+        if not node.unpack_to_dest.value:
+            raise ValueError(
+                f"{location}: Quasar unpack_to_dest synchronization applies to the whole pipeline; "
+                "SrcA/SrcB unpacking is unsupported because math waits for the complete unpack section. "
+                "Use direct-to-DEST input copies or a separate pipeline for source-register streaming."
+            )
+        if math_started:
+            raise ValueError(
+                f"{location}: unpack_to_dest copies must precede all math/SFPU work in the section; "
+                "Metal's section-level protocol completes all direct writes before math starts."
+            )
+
+
+def uses_unpack_to_dest_sync(config: "GlobalConfig") -> bool:
+    return config.quasar_unpack_to_dest and not config.skip_unpack_init
+
+
+def unpack_to_dest_sync_init(config: "GlobalConfig", operation: "L1Operation") -> str:
+    if not uses_unpack_to_dest_sync(config) or operation.stage_id != 1:
+        return ""
+    num_banks = 2 if operation.dest_sync == DestSync.Half else 1
+    return (
+        "set_up_zero_dest_dvalid_handshake_for_unpack();\n"
+        "_llk_unpack_dest_init_();\n"
+        f"_llk_sync_init_(semaphore::UNPACK_MATH, {num_banks}, 0);\n"
+        f"_llk_sync_init_(semaphore::UNPACK_PACK, {num_banks}, 0);\n"
+        "_llk_sync_barrier_raise_(semaphore::UNPACK_INIT);\n"
+    )
+
+
+def unpack_to_dest_wait_for_dest_available(config: "GlobalConfig") -> str:
+    if not uses_unpack_to_dest_sync(config):
+        return ""
+    return "_llk_sync_wait_<p_stall::STALL_UNPACK, p_stall::STALL_ON_MAX>(semaphore::UNPACK_PACK);\n"
+
+
+def unpack_to_dest_section_done(
+    config: "GlobalConfig", operation: "L1Operation"
+) -> str:
+    if not uses_unpack_to_dest_sync(config):
+        return ""
+    code = (
+        "_llk_sync_post_<p_stall::UNPACK0>(semaphore::UNPACK_PACK);\n"
+        "_llk_sync_post_<p_stall::UNPACK0>(semaphore::UNPACK_MATH);\n"
+    )
+    if operation.dest_sync == DestSync.Half:
+        code += (
+            f"_llk_unpack_dest_section_advance_<{config.dest_acc.cpp_enum_value}>();\n"
+        )
+    return code

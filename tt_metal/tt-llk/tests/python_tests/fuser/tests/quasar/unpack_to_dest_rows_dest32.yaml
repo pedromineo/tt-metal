@@ -1,0 +1,29 @@
+# Multiple rows per section, repeated bank reuse, and partial row/column blocks.
+dest_acc: true
+
+operands:
+  - name: input
+    dims: [160, 96]
+    format: Float32
+  - name: output
+    dims: [160, 96]
+    format: Float32
+
+operations:
+  - dest_sync: SyncHalf
+    math:
+      - type: Fpu
+        in0: input
+        operation: Datacopy
+        unpacker: UnpackerA
+        unpack_to_dest: true
+        block_size: [64, 64]
+      - type: UnarySfpu
+        operation: Square
+        approximation_mode: false
+        iterations: 32
+        block_size: [64, 64]
+    pack:
+      - output: output
+        packer: Packer
+        block_size: [64, 64]

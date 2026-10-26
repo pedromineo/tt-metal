@@ -29,6 +29,7 @@ from helpers.test_config import (
 from .fpu_node import FpuNode
 from .l1_operation import L1Operation
 from .operand import OperandRegistry
+from .quasar.unpacker import common as quasar_unpack_common
 from .sentinel import FuserSentinel
 from .sfpu_node import SfpuNode
 
@@ -43,6 +44,7 @@ class GlobalConfig:
     perf_run_type: PerfRunType = None
     loop_factor: int = 16
     quasar_use_dvalid: bool = False
+    quasar_unpack_to_dest: bool = field(default=False, init=False)
     skip_for_perf: bool = False
     sentinel: FuserSentinel = field(default_factory=FuserSentinel)
 
@@ -91,6 +93,9 @@ class FuserConfig(TestConfig):
 
         if self.global_config.architecture is None:
             self.global_config.architecture = self.CHIP_ARCH
+        quasar_unpack_common.configure_unpack_to_dest_sync(
+            self.global_config, self.pipeline
+        )
         self._validate_pack_sfpu_formats()
 
     def _validate_pack_sfpu_formats(self):

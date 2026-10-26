@@ -22,6 +22,7 @@ from .fpu_node import FpuNode
 from .golden.executor import GoldenExecutor
 from .pack_node import PackNode
 from .pipeline_plan import PlannedBlock, plan_pipeline
+from .quasar.unpacker import common as quasar_unpack_common
 from .sfpu_node import SfpuNode
 
 if TYPE_CHECKING:
@@ -149,6 +150,7 @@ class L1Operation:
         init_code += config.sentinel.hw_configure_unpack(config, self)
         if unpack_ops and not config.skip_unpack_init:
             init_code += config.sentinel.configure_unpack(config, self, unpack_ops[0])
+        init_code += quasar_unpack_common.unpack_to_dest_sync_init(config, self)
         if hoist and not unpack_ops[0].unpacker.per_block_init:
             init_code += unpack_ops[0].unpack_init(self, config, None)
         code = self._zone(config, "INIT", init_code)
@@ -166,7 +168,7 @@ class L1Operation:
             )
 
         def batch_body(planned: PlannedBlock, constants):
-            body = ""
+            body = quasar_unpack_common.unpack_to_dest_wait_for_dest_available(config)
             for cu in self.math_nodes:
                 if not isinstance(cu, FpuNode):
                     continue
@@ -188,6 +190,7 @@ class L1Operation:
                     body += cu.unpack_uninit(self, config, block)
             if not hoist_reconfig and not config.skip_unpack_init:
                 body += config.sentinel.configure_unpack(config, self, unpack_ops[0])
+            body += quasar_unpack_common.unpack_to_dest_section_done(config, self)
             return body
 
         code += self._zone_loop(
