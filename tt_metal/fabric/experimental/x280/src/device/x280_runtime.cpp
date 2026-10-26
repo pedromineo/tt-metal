@@ -13,6 +13,7 @@
 
 #include "impl/context/metal_context.hpp"
 
+#include <internal/mesh_device.hpp>
 #include <llrt/tt_cluster.hpp>
 #include <mesh_device.hpp>
 #include <tt-metalium/mesh_coord.hpp>
@@ -670,7 +671,7 @@ TranslatedCoord X280Runtime::virtual_core_from_logical_core(
     if (!scope.is_initialized()) {
         fail("cannot resolve coordinates: the MeshDevice scope is closed");
     }
-    auto* device = scope.get_device(chip);
+    auto* device = tt::tt_metal::internal::get_device(scope, chip);
     if (device == nullptr) {
         fail("cannot resolve coordinates: the scope has no local chip at the requested mesh coordinate");
     }
