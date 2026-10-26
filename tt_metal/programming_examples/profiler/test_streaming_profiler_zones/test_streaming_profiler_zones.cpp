@@ -73,6 +73,8 @@ int main(int argc, char** argv) {
     // zone named STALL_ZONE_NAME, which ends after it starts on both clocks.
     struct Totals {
         std::atomic<uint64_t> zones{0}, points{0}, stalls{0}, unordered_stall_zones{0}, mismatched_batches{0};
+        // The workload's grid, set before it launches.
+        std::atomic<uint32_t> gx{0}, gy{0};
     } totals;
     using experimental::streaming_profiler::Batch;
     using experimental::streaming_profiler::Event;
@@ -81,8 +83,13 @@ int main(int argc, char** argv) {
     using experimental::streaming_profiler::Zone;
     auto callback = experimental::streaming_profiler::RegisterCallback(
         [&](const Batch<Zone, TimestampedData, Event>& batch) {
-            // Counts only the Tensix grid's zones, which are the workload's. Whether an eth core's last firmware zone
-            // ships depends on teardown timing.
+            // Counts only the workload cores' records. How many the dispatch cores send depends on the commands they
+            // run, and whether an eth core's last firmware zone ships depends on teardown timing.
+            const auto from_workload = [&](const auto& record) {
+                const auto core = record.core();
+                return core.processor != Processor::ERISC0 && core.processor != Processor::ERISC1 &&
+                       core.logical.x < totals.gx && core.logical.y < totals.gy;
+            };
             uint64_t stall_zones = 0;
             totals.zones += std::ranges::count_if(batch.records<Zone>(), [&](const Zone& zone) {
                 if (zone.metadata().name == experimental::streaming_profiler::STALL_ZONE_NAME) {
@@ -92,10 +99,11 @@ int main(int argc, char** argv) {
                     ++stall_zones;
                     totals.unordered_stall_zones += ordered ? 0 : 1;
                 }
-                return zone.core().processor != Processor::ERISC0 && zone.core().processor != Processor::ERISC1;
+                return from_workload(zone);
             });
             totals.mismatched_batches += stall_zones == batch.stall_count() ? 0 : 1;
-            totals.points += batch.records<Event>().size() + batch.records<TimestampedData>().size();
+            totals.points += std::ranges::count_if(batch.records<Event>(), from_workload) +
+                             std::ranges::count_if(batch.records<TimestampedData>(), from_workload);
             totals.stalls += batch.stall_count();
         },
         "zones-example");
@@ -127,6 +135,8 @@ int main(int argc, char** argv) {
         gy = grid.y;
     }
     CoreRange cores(CoreCoord{0, 0}, CoreCoord{gx - 1, gy - 1});
+    totals.gx = gx;
+    totals.gy = gy;
     const char* zone_mode = "0";
     if (bench) {
         zone_mode = "2";

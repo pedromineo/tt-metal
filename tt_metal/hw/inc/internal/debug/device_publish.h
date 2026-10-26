@@ -761,8 +761,7 @@ static const spd::CallSiteEntry call_site_entry __attribute__((section(".tt_reco
 
 // Records travel on the streaming profiler's rings, so internal/profiler/kernel_profiler_streaming.hpp includes this
 // header once its ring is defined. Elsewhere a call checks its types by the same rules and compiles to nothing.
-#if defined(PROFILE_STREAMING) && defined(PROFILE_KERNEL) && !defined(DISPATCH_KERNEL) && \
-    !defined(STREAMING_PROFILER_RELAY_KERNEL)
+#if defined(PROFILE_STREAMING) && defined(PROFILE_KERNEL) && !defined(STREAMING_PROFILER_RELAY_KERNEL)
 
 namespace kernel_profiler::records {
 
