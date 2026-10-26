@@ -749,7 +749,7 @@ struct Described<ZoneStart> {
 template <auto kLocation, auto kMetadata, typename Data>
 static char call_site_handle __attribute__((section(".tt_record_ids"), unused)) = 0;
 
-template <auto kLocation, auto kMetadata, typename Data, bool kWholeTime>
+template <auto kLocation, auto kMetadata, typename Data, bool kSendsToExternalProcess>
 static const spd::CallSiteEntry call_site_entry __attribute__((section(".tt_record_meta"), unused)) = {
     .id = &call_site_handle<kLocation, kMetadata, Data>,
     .metadata_type = section_type_name<decltype(kMetadata)>.data(),
@@ -765,9 +765,10 @@ static const spd::CallSiteEntry call_site_entry __attribute__((section(".tt_reco
     .data_field_count = uint32_t(section_codes<typename Described<Data>::type>.size()),
     .data_arguments = section_arguments<typename Described<Data>::type>.data(),
     .data_argument_count = uint32_t(section_arguments<typename Described<Data>::type>.size()),
-    .data_layouts = section_layouts<Data, kWholeTime>.data(),
-    .data_layout_count = uint32_t(section_layouts<Data, kWholeTime>.size()),
+    .data_layouts = section_layouts<Data, kSendsToExternalProcess>.data(),
+    .data_layout_count = uint32_t(section_layouts<Data, kSendsToExternalProcess>.size()),
     .data_published_field = Described<Data>::kPublishedField,
+    .sends_to_external_process = kSendsToExternalProcess,
 };
 }  // namespace kernel_profiler::records
 
@@ -911,8 +912,9 @@ private:
     static constexpr bool kFromRegisters = std::is_same_v<Source, RegisterWords<Data>>;
     static constexpr bool kCopyRuns = !kFromRegisters;
 
+    // A whole-time record, which is always full, sends its Timestamps whole: a distance would take the same 8 bytes.
     template <size_t K>
-    static constexpr bool kIsDistance = kSlices<Data>[K].is_distance;
+    static constexpr bool kIsDistance = kSlices<Data>[K].is_distance && !kWholeTime;
 
     // The record being written: where its arguments are, its time, and each slice's Timestamp bits, which are read
     // before anything is written because they choose the form (0 for any other slice, which is read as it is stored).

@@ -3,90 +3,81 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The link between a profiled process and the external process: a Unix socket under one abstract name per user, which
-// the external process listens on, and the only thing the two processes share. A profiled process connects when its
-// capture starts, and again while it runs whenever none is connected. It first sends a hello: its relays, by the PCIe
-// device each sits on, its capture's devices as the decoder reads them, and the base of its clock map. From then on it
-// sends every change to its clock map. The external process pins one buffer per relay in its own memory and sends their
-// device addresses, and the profiled process points each relay's external socket at its buffer; the relay then copies
-// there the records sent with kSendToExternalProcess. The external process asks for each call site it meets by id, and
-// the profiled process answers from the images it has loaded. A call site's id is assigned when its image loads, before
-// any of its records exists, so every id the external process meets has an answer.
+// the external process listens on, and the only thing the two processes share. Each end drops a peer that runs as
+// another user. Only the profiled process sends, and it never waits for the external process. It connects when its
+// capture starts, and again while it runs whenever none is connected. It sends the messages of
+// protobuf/external_process.proto, one Envelope per length-prefixed frame: its CaptureDescriptor, then the call sites
+// whose records go to the external process, as each image loads and before any of their records exists, then
+// CaptureEnded once its relays have stopped. The external process points the devices at rings in its own memory itself,
+// through the endpoints the descriptor names, and the relays write the routed records and clock sync measurements
+// there.
 #pragma once
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
-#include <span>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
-#include "impl/streaming_profiler/capture_context.hpp"
-#include "impl/streaming_profiler/sync/clock_map.hpp"
+// protobuf/external_process.pb.h, which only the sources that build or read the messages include.
+namespace tt::streaming_profiler::proto {
+class CaptureDescriptor;
+class FrameLayout;
+class PacketFormat;
+}  // namespace tt::streaming_profiler::proto
 
 namespace tt::tt_metal::streaming_profiler::external {
 
-// An external process's buffer for one relay: a ring of `bytes` at device address `noc_addr`, with the relay's
-// bytes_sent in the word after it.
-struct RelayBuffer {
-    uint32_t relay = 0;
-    uint64_t noc_addr = 0;
-    uint32_t bytes = 0;
-};
+namespace proto = ::tt::streaming_profiler::proto;
 
-// What a profiled process sends first: each relay's PCIe device and the capture device it serves, the capture's
-// devices, and the bases its clock map counts from.
-struct Hello {
-    struct Relay {
-        uint32_t pcie_device = 0;
-        uint32_t dev = 0;
-    };
-    std::vector<Relay> relays;
-    std::vector<CaptureContext::Device> devices;
-    ClockBases bases;
-};
+// The protocol version this build speaks: an external process refuses a profiled process with another.
+inline constexpr uint32_t kProtocolVersion = 1;
 
-// The profiled process's end. `attach` points a relay at a buffer and returns whether the relay follows; `detach`
-// turns a relay's copies off and returns once its last one has landed.
+// This build's frame and packet formats, as a capture descriptor gives them.
+proto::FrameLayout this_build_frame_layout();
+proto::PacketFormat this_build_packet_format();
+
+// The profiled process's end. `detach` turns the relays' writes to the external process's rings off and returns once
+// their last ones have landed, which this end does when an external process goes, so none writes to its freed rings.
 class ProfiledEnd {
 public:
-    using Attach = std::function<bool(const RelayBuffer&)>;
-    using Detach = std::function<void(uint32_t relay)>;
-    ProfiledEnd(const Hello& hello, Attach attach, Detach detach);
-    // Sends the clock map changes made before it, then closes the link.
+    using Detach = std::function<void()>;
+    ProfiledEnd(const proto::CaptureDescriptor& descriptor, Detach detach);
+    // Closes the link.
     ~ProfiledEnd();
     // Connects to the external process listening on the socket name, and keeps trying while none is connected. Called
-    // once the relays run. When an external process listens now, returns once it has attached, so a kernel launched
-    // after this returns has its records copied there.
+    // once the relays run. Records published before the external process points the relays at its rings stay in this
+    // process.
     void start();
+    // Tells the external process the capture has ended, once every relay has stopped and its last write has landed.
+    void end_capture();
     ProfiledEnd(const ProfiledEnd&) = delete;
     ProfiledEnd& operator=(const ProfiledEnd&) = delete;
-
-    // Sends a change to the capture's clock map. Called on the thread that makes it, from before start() on.
-    void send(const ClockUpdate& update);
 
 private:
     void run();
     void serve(int fd);
-    void wake();
+    // Sends the external process the call sites for it loaded since the last push, under send_mu_; false when the link
+    // failed.
+    bool push_call_sites();
 
-    const std::vector<uint8_t> hello_;
-    const Attach attach_;
+    const std::vector<uint8_t> descriptor_;  // its Envelope, serialized
     const Detach detach_;
-    int wake_[2] = {-1, -1};
 
     std::mutex mu_;
-    std::condition_variable started_cv_;
-    enum class Start { Trying, Done } start_ = Start::Trying;
-    bool connected_ = false;
+    std::condition_variable stop_cv_;
     bool stop_ = false;
-    std::vector<ClockUpdate> queued_;
-    // The newest change to each series, which an external process that connects later starts from.
-    std::vector<std::optional<ClockUpdate>> newest_chip_;
-    std::optional<ClockUpdate> newest_host_;
-    std::vector<bool> finished_;
+    // Every write to the link, from its thread or from a thread loading an image.
+    std::mutex send_mu_;
+    int fd_ = -1;  // the connected external process's socket, -1 while none is
+    size_t call_sites_pushed_ = 0;
+    bool capture_ended_ = false;
 
     std::thread thread_;
 };
@@ -101,52 +92,52 @@ public:
 
     // Listens on the socket name; false while another process holds it.
     bool listen();
-    // Waits for the next profiled process and returns its connection, or -1 once stopped.
+    // Waits for the next profiled process of this user and returns its connection, or -1 when the socket fails.
     int accept() const;
-    // Ends a wait in accept(), and every later one.
-    void stop();
 
 private:
     int fd_ = -1;
 };
 
-// The external process's end of one profiled process's link. Once started, a thread of its own reads what the
-// profiled process sends until it closes the link.
+// The external process's end of one profiled process's link. Once started, a thread of its own reads what the Metal
+// process sends until it closes the link.
 class ExternalEnd {
 public:
-    using OnClock = std::function<void(std::span<const ClockUpdate>)>;
-    // Reads the hello from `fd`, which it then owns. hello() is nullopt when the profiled process closed first.
+    // Reads the CaptureDescriptor from `fd`, which it then owns. descriptor() is null when the profiled process
+    // closed first, sent none in time, or speaks another protocol version.
     explicit ExternalEnd(int fd);
     ~ExternalEnd();
     ExternalEnd(const ExternalEnd&) = delete;
     ExternalEnd& operator=(const ExternalEnd&) = delete;
 
-    const std::optional<Hello>& hello() const { return hello_; }
-    // Starts handing the clock map's changes to `on_clock`, on the link's thread. Requests need it started.
-    void start(OnClock on_clock);
+    const proto::CaptureDescriptor* descriptor() const { return descriptor_.get(); }
+    // The profiled process's pid, which messages name it by.
+    int pid() const { return pid_; }
+    // Starts the link's thread, which reads the call sites the profiled process pushes.
+    void start();
     // Whether the profiled process has closed the link. Callable from any thread.
     bool closed() const { return closed_.load(std::memory_order_acquire); }
+    // Whether the profiled process ended its capture before it closed the link, which a process that died doesn't. Set
+    // before closed().
+    bool capture_ended() const { return capture_ended_.load(std::memory_order_acquire); }
 
-    // Points the relays at these buffers; false when the profiled process can't or has gone.
-    bool attach(std::span<const RelayBuffer> buffers);
-    // Turns the relays' copies off and returns once nothing more lands in the buffers, so they can be freed.
-    void detach();
-    // Adds the call site the profiled process knows by `id` to this process's call sites and returns its id here, or
-    // nullopt when the profiled process has none or has gone.
-    std::optional<uint32_t> add_site(uint32_t id);
+    // Ends the link, which has the profiled process turn its relays' writes off.
+    void drop();
+    // The id here of the call site the profiled process knows by `id`, which it pushed before any of the site's records
+    // existed: waits for the link's thread to read it, and is nullopt when the link ended without it.
+    std::optional<uint32_t> local_id(uint32_t id);
 
 private:
-    std::optional<std::vector<uint8_t>> request(const std::vector<uint8_t>& message);
     void read_thread();
 
     const int fd_;
-    std::optional<Hello> hello_;
-    OnClock on_clock_;
+    int pid_ = 0;
+    std::unique_ptr<proto::CaptureDescriptor> descriptor_;
     std::atomic<bool> closed_{false};
-    std::mutex request_mu_;  // one request is outstanding at a time
-    std::mutex reply_mu_;
-    std::condition_variable reply_cv_;
-    std::optional<std::vector<uint8_t>> reply_;
+    std::atomic<bool> capture_ended_{false};
+    std::mutex sites_mu_;
+    std::condition_variable sites_cv_;
+    std::unordered_map<uint32_t, uint32_t> sites_;  // the profiled process's call-site ids, to this process's
     std::thread thread_;
 };
 

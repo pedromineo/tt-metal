@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -42,6 +43,7 @@ struct CallSite {
     // An argument the call passes, struct data being one.
     struct Argument {
         std::string_view type;  // empty for a plain argument
+        bool is_enum = false;   // whether `type` names an enum rather than a struct
         uint32_t first_field = 0;
         bool is_array = false;
         std::vector<FieldBits> field_bits;  // where its fields lie in it, in one element for an array
@@ -55,7 +57,8 @@ struct CallSite {
         std::vector<FieldBits> data_bits;  // each data field's bits in the payload, width 0 if it holds none
     };
     std::vector<PacketLayout> packet_layouts;
-    bool timestamps_as_distances = false;  // whether its Timestamp fields travel back from the record's time
+    bool timestamps_as_distances = false;    // whether its Timestamp fields travel back from the record's time
+    bool sends_to_external_process = false;  // whether its records go to the external process too
     // The data field that is the record's own time, which no form sends.
     uint32_t published_field = tt::tt_metal::experimental::streaming_profiler::detail::kNoPublishedField;
     // The metadata's fields as the call site sets them: each one's bits, sign-extended for a signed field, or a
@@ -71,6 +74,14 @@ void load_call_sites(const std::string& elf_path, ll_api::ElfFile& elf);
 // Gives a call site another process described the next id, and returns it. The site's strings may point at the
 // caller's memory; the registry keeps its own copies.
 uint32_t add_call_site(CallSite site);
+
+// Has `listener` called once each image's call sites are read, on the thread that loads the image, before the image can
+// run. An empty listener removes it, and returns once no call to the last one is in flight.
+void set_call_site_listener(std::function<void()> listener);
+
+// The ids of the call sites whose records go to the external process, in the order their images loaded, from the
+// `first`th on.
+std::vector<uint32_t> ids_of_call_sites_sending_to_external_process(size_t first);
 
 // The call site with id `id`, or null when no loaded image holds it. A call site lives for the process.
 const CallSite* find_call_site(uint32_t id);

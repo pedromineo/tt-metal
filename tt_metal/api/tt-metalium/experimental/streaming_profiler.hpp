@@ -129,7 +129,10 @@ struct BatchData {
 struct Kind;
 using CallbackId = ttsl::StrongType<uint32_t, struct CallbackIdTag>;
 Callback register_callback(
-    std::string name, std::span<const Kind> kinds, std::function<void(const BatchData&)> callback);
+    std::string name,
+    std::span<const Kind> kinds,
+    std::function<void(const BatchData&)> callback,
+    bool external_process);
 
 class FieldReader {
 public:
@@ -467,7 +470,10 @@ public:
 
 private:
     friend Callback detail::register_callback(
-        std::string name, std::span<const detail::Kind> kinds, std::function<void(const detail::BatchData&)> callback);
+        std::string name,
+        std::span<const detail::Kind> kinds,
+        std::function<void(const detail::BatchData&)> callback,
+        bool external_process);
     explicit Callback(detail::CallbackId id) : id_(id) {}
     detail::CallbackId id_;
 };
@@ -482,16 +488,20 @@ private:
  *
  * @param callback Takes one `const Batch<Ts...>&`; Ts selects the record types it receives.
  * @param name Optional name for the callback in the profiler's logs and thread names.
+ * @param external_process Makes this process the external process, whose callbacks receive the records that Metal
+ * processes of this user on this host send with kSendToExternalProcess. Throws when another process is the external
+ * process.
  * @return The registration; the callback runs until it is destroyed.
  */
 template <BatchCallable F>
-Callback RegisterCallback(F callback, std::string name = {}) {
+Callback RegisterCallback(F callback, std::string name = {}, bool external_process = false) {
     return detail::register_callback(
         std::move(name),
         detail::CallbackBatch<F>::kKinds,
         [callback = std::move(callback)](const detail::BatchData& data) mutable {
             callback(detail::CallbackBatch<F>(data));
-        });
+        },
+        external_process);
 }
 
 /**
@@ -534,7 +544,7 @@ public:
 
 private:
     template <BatchCallable F>
-    friend Callback RegisterCallback(F callback, std::string name);
+    friend Callback RegisterCallback(F callback, std::string name, bool external_process);
     static constexpr std::array<detail::Kind, sizeof...(Ts)> kKinds{Ts::kind()...};
     template <typename T>
     static constexpr std::size_t kIndex = std::variant<std::type_identity<Ts>...>(std::type_identity<T>()).index();

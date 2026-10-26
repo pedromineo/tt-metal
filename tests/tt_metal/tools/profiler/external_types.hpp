@@ -12,9 +12,11 @@
 
 namespace external_test {
 
-// Which of the test's two call sites sent it, the iteration that sent it, and a value derived from both.
+// When the kernel took it, which of the test's two call sites sent it, the iteration that sent it, and a value derived
+// from both.
 struct Reading {
-    uint32_t destination;  // 0 this process alone, 1 the external process too
+    tt::tt_metal::experimental::streaming_profiler::Timestamp taken;  // just before the kernel published it
+    uint32_t destination;                                               // 0 this process alone, 1 the external process too
     uint32_t iteration;
     uint32_t value;
 };
