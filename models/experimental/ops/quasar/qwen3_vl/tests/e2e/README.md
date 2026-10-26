@@ -102,6 +102,10 @@ Wall time is the first-to-last-op span from `progress.log` (setup and weight loa
 
 | Target | Grid | Verdict | Wall time | Date | Run folder (`generated/qwen3_vl_quasar/...`) |
 |---|---|---|---|---|---|
+| craq-sim (staged .so md5 74c8eb33), main fb6d34ceaed | 2x1 | PASS (prefill 0.99727, decode0 0.99918) | 42 min | 2026-10-26 | `craq_2x3/20261026T164502Z` |
+| craq-sim (same) | 8x4 | PASS (prefill 0.99710, decode0 0.99915) | 14 min | 2026-10-26 | `craq_8x4/20261026T172737Z` |
+| emu-quasar-2x3, DRAM clamp bypassed (`emu-quasar-2x3-uncapped`, see the plan's open decision) | 2x1 | runs every stage (1212 device ops, no hang or crash); FAIL on PCC from `vision.block0.attn` on, the accepted DRAM-wrap effect (S7) | 203 min ops (3 h 38 min pytest; 13 min Zebu queue before it) | 2026-10-26 | `emu_2x3/20261026T154632Z` |
+| emu-quasar-2x3, with the #60444 DRAM clamp | 2x1 | FAIL at weight upload: OOM (2 x ~41 MiB usable) | 4 min | 2026-10-26 | `emu_2x3/20261026T151437Z` |
 | craq-sim (a928410c / staged .so md5 74c8eb33) | 2x1 | PASS (prefill logits 0.99727, decode0 0.99918) | 41 min | 2026-10-22 | `craq_2x3/20261022T134319Z` |
 | craq-sim (same) | 8x4 | PASS (prefill 0.99710, decode0 0.99915) | 14 min | 2026-10-22 | `craq_8x4/20261022T142425Z` |
 | craq-sim, without `quasar_rms_norm_bf16_dest` | 2x1 / 8x4 | PASS (prefill 0.99685 / 0.99687) | 42 min / 15 min | 2026-10-21 | `craq_2x3/20261021T170032Z`, `craq_8x4/20261021T175443Z` |
