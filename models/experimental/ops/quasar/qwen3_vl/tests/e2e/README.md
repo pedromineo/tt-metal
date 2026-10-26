@@ -92,9 +92,8 @@ Kernel fixes not yet in main, each a separate `[droppable]` commit (details in t
 | Commit | Why | Drop when |
 |---|---|---|
 | `[droppable] tensor_layout: skip the duplicate from_shard_spec call ...` | left over from the #57753 PR head; not in main | it is no longer needed by the e2e |
-| `[droppable] slice (Quasar): write back and drop the reader's scratchpad cache lines ...` | Q17: stale DM-cache lines from the slice reader corrupt a later decode rms_norm | a general fix lands (no PR yet) |
+| `[droppable] slice (Quasar): access the readers' index odometer under a scoped_lock (#62543)` | Q17: stale DM-cache lines from the slice readers' Scratchpad corrupt a later decode rms_norm | [#62543](https://github.com/tenstorrent/tt-metal/pull/62543) lands |
 | `[droppable] revert #57646 (DFB drain in the DataflowBuffer destructor) ...` | Q18: with the destructor drain, `paged_update_cache` and the sharded rms_norm still hang on craq-sim | those kernels are fixed (#60027) |
-| `[droppable] layernorm (Quasar): keep the reduce scaler DataflowBuffer at kernel scope ...` | Q18: layer_norm hangs under the drain (draft [#62427](https://github.com/tenstorrent/tt-metal/pull/62427)) | #62427 lands |
 
 ## Baselines and run times
 
