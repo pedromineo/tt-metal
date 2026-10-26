@@ -4,6 +4,7 @@
 
 import itertools
 import math
+import struct
 
 import pytest
 import torch
@@ -198,6 +199,21 @@ def test_permute_pad_value(device, pad_value):
     tt_output = ttnn.permute(tt_input, (3, 2, 1, 0), pad_value=pad_value)
     tt_output = ttnn.to_torch(tt_output)
     assert_equal(torch_output, tt_output)
+
+
+@pytest.mark.parametrize("dtype, pad_bits", [(ttnn.int32, 0x7FFFFFFF), (ttnn.uint32, 0xFFFFFFFF)])
+def test_transpose_hc_integer_pad_value_bits(device, dtype, pad_bits):
+    """A 32-bit integer pad value arrives as the float's bit pattern, like reduce's min sentinels."""
+    torch_input = torch.randint(0, 1000, (1, 30, 32, 32), dtype=torch.int32)
+    tt_input = ttnn.from_torch(torch_input, dtype=dtype, layout=ttnn.TILE_LAYOUT, device=device)
+    pad_value = struct.unpack("<f", struct.pack("<I", pad_bits))[0]
+
+    tt_output = ttnn.transpose(tt_input, 1, 2, pad_value=pad_value)
+
+    assert_equal(torch.transpose(torch_input, 1, 2), ttnn.to_torch(tt_output).to(torch.int32))
+    # C = 30 becomes the H dimension. Its two padded rows hold the pad value.
+    padded_rows = ttnn.from_device(tt_output).to_torch_with_padded_shape()[:, :, 30:, :].to(torch.int64) & 0xFFFFFFFF
+    assert torch.all(padded_rows == pad_bits)
 
 
 def generate_permutations(N):

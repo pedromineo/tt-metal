@@ -49,6 +49,12 @@ static ttnn::PadValue get_tilize_pad_value(tt::tt_metal::ReduceOpMath reduce_mat
             default: return ttnn::PadValue{uint32_t{0}};
         }
     }
+    if (dtype == tt::tt_metal::DataType::UINT32) {
+        switch (reduce_math) {
+            case tt::tt_metal::ReduceOpMath::MIN: return ttnn::PadValue{uint32_t{0xFFFFFFFF}};  // UINT32_MAX
+            default: return ttnn::PadValue{uint32_t{0}};  // the MAX and SUM identity
+        }
+    }
     return ttnn::PadValue{ttnn::prim::get_reduce_pad_value(reduce_math)};
 }
 

@@ -113,6 +113,14 @@ float get_pad_value(
         return 0.0f;
     }
 
+    // UINT32 max/min carry their sentinels the same way. UINT32_MAX has no exact float value.
+    if (dtype == tt::tt_metal::DataType::UINT32) {
+        if (reduce_type == reduction_common::ReduceType::Min) {
+            return std::bit_cast<float>(static_cast<uint32_t>(0xFFFFFFFFu));  // UINT32_MAX
+        }
+        return 0.0f;  // the Max and Sum identity
+    }
+
     return reduce_type == reduction_common::ReduceType::Max
                ? -std::numeric_limits<float>::infinity()
                : (reduce_type == reduction_common::ReduceType::Min ? std::numeric_limits<float>::infinity() : 0);
@@ -567,11 +575,12 @@ Tensor reduce(
     ttsl::SmallVector<int> non_height_width_dims{}, height_width_dims{};
 
     bool is_tiled = input_tensor_arg.layout() == TILE_LAYOUT;
-    // For INT32 the pad sentinel is carried as a raw bit pattern (see get_pad_value); pass it through
-    // PadValue's integer arm so fill_pad reinterprets the bits rather than decoding numerically.
-    const ttnn::PadValue fill_pad_value = input_tensor_arg.dtype() == tt::tt_metal::DataType::INT32
-                                              ? ttnn::PadValue{std::bit_cast<uint32_t>(pad_value)}
-                                              : ttnn::PadValue{pad_value};
+    // For INT32 and UINT32 the pad sentinel is carried as a raw bit pattern (see get_pad_value); pass it
+    // through PadValue's integer arm so fill_pad reinterprets the bits rather than decoding numerically.
+    const bool is_32_bit_integer = input_tensor_arg.dtype() == tt::tt_metal::DataType::INT32 ||
+                                   input_tensor_arg.dtype() == tt::tt_metal::DataType::UINT32;
+    const ttnn::PadValue fill_pad_value =
+        is_32_bit_integer ? ttnn::PadValue{std::bit_cast<uint32_t>(pad_value)} : ttnn::PadValue{pad_value};
     auto input_tensor = input_tensor_arg;
     if (is_tiled &&
         (input_tensor.logical_shape()[-2] % tt::constants::TILE_HEIGHT != 0 ||
